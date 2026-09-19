@@ -1,15 +1,30 @@
 package registry
 
 import (
+	"cmp"
 	"errors"
+	"slices"
 	"sync"
 	"time"
 )
 
+const (
+	DefaultScheme        = "http"
+	DefaultHealthPath    = "/health"
+	DefaultHealthTimeout = 1 * time.Second
+	DefaultWeight        = 1
+)
+
 type Backend struct {
-	Addr     string
-	Service  string
-	LastSeen time.Time
+	Addr          string
+	Service       string
+	Scheme        string
+	HealthPath    string
+	HealthTimeout time.Duration
+	HealthStatus  int
+	Weight        int
+	Healthy       bool
+	LastSeen      time.Time
 }
 
 type Registry struct {
@@ -23,10 +38,49 @@ func New() *Registry {
 	}
 }
 
-func (r *Registry) Register(addr, service string) {
+func (r *Registry) Register(b Backend) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.backends[addr] = Backend{Addr: addr, Service: service, LastSeen: time.Now()}
+	if b.Scheme == "" {
+		b.Scheme = DefaultScheme
+	}
+	if b.HealthPath == "" {
+		b.HealthPath = DefaultHealthPath
+	}
+	if b.HealthTimeout <= 0 {
+		b.HealthTimeout = DefaultHealthTimeout
+	}
+	if b.Weight <= 0 {
+		b.Weight = DefaultWeight
+	}
+	b.LastSeen = time.Now()
+	b.Healthy = r.backends[b.Addr].Healthy
+	r.backends[b.Addr] = b
+}
+
+func (r *Registry) SetHealth(addr string, healthy bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	b, ok := r.backends[addr]
+	if !ok {
+		return
+	}
+	b.Healthy = healthy
+	r.backends[addr] = b
+}
+
+func (r *Registry) HealthyBackends(service string) []Backend {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]Backend, 0, len(r.backends))
+	for _, b := range r.backends {
+		if b.Healthy && b.Service == service {
+			out = append(out, b)
+		}
+	}
+	slices.SortFunc(out, func(a, b Backend) int { return cmp.Compare(a.Addr, b.Addr) })
+	return out
 }
 
 var ErrNotFound = errors.New("backend not registered")
