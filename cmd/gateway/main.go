@@ -6,35 +6,40 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/ihsanguldur/api-gateway/internal/health"
+	"github.com/ihsanguldur/api-gateway/internal/loadbalancer"
 	"github.com/ihsanguldur/api-gateway/internal/proxy"
 	"github.com/ihsanguldur/api-gateway/internal/registry"
+	"github.com/ihsanguldur/api-gateway/internal/router"
 )
 
 const (
-	backendTTL    = 10 * time.Second
-	sweepInternal = 5 * time.Second
+	backendTTL     = 10 * time.Second
+	sweepInternal  = 5 * time.Second
+	healthInterval = 2 * time.Second
 )
 
 func main() {
-	backend := flag.String("backend", "http://localhost:9000", "backend address to proxy")
 	addr := flag.String("addr", ":8080", "address for the gateway to listen on")
 	flag.Parse()
-
-	proxyHandler, err := proxy.NewSingleHostProxy(*backend)
-	if err != nil {
-		log.Fatalf("invalid backend address: %v", err)
-	}
 
 	reg := registry.New()
 	reg.StartSweeper(backendTTL, sweepInternal, nil)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/internal/register", reg.RegisterHandler)
-	mux.HandleFunc("/internal/heartbeat", reg.HeartbeatHandler)
-	mux.HandleFunc("/internal/backends", reg.ListHandler)
-	mux.Handle("/", proxyHandler)
+	checker := health.NewChecker(reg)
+	checker.Start(healthInterval, nil)
 
-	log.Printf("gateway listening on %s, proxying to %s", *addr, *backend)
+	mux := http.NewServeMux()
+	reg.RegisterRoutes(mux)
+
+	// TODO: hardcoded for now, will be moved to a JSON config file.
+	rt := router.New([]router.Route{
+		{Prefix: "/api/users", Service: "user-service", LB: &loadbalancer.LeastConnections{}},
+		{Prefix: "/api/orders", Service: "order-service", LB: &loadbalancer.WeightedRoundRobin{}},
+	})
+	mux.Handle("/", proxy.NewBalancedProxy(rt, reg))
+
+	log.Printf("gateway listening on %s", *addr)
 	if err := http.ListenAndServe(*addr, mux); err != nil {
 		log.Fatal(err)
 	}
