@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/ihsanguldur/api-gateway/internal/breaker"
 	"github.com/ihsanguldur/api-gateway/internal/health"
 	"github.com/ihsanguldur/api-gateway/internal/loadbalancer"
 	"github.com/ihsanguldur/api-gateway/internal/proxy"
@@ -21,6 +22,12 @@ const (
 	rateLimit      = 10
 	rateBurst      = 20
 	limiterSweep   = 1 * time.Minute
+
+	breakerThreshold = 5
+	breakerCooldown  = 10 * time.Second
+	breakerSweep     = 1 * time.Minute
+	breakerIdle      = 10 * time.Minute
+	upstreamTimeout  = 10 * time.Second
 )
 
 func main() {
@@ -37,6 +44,10 @@ func main() {
 	limiter := ratelimit.New(rateLimit, rateBurst)
 	limiter.StartJanitor(limiterSweep, nil)
 
+	// TODO: hardcoded for now, will be moved to a JSON config file.
+	breakers := breaker.NewSet(breakerThreshold, breakerCooldown)
+	breakers.StartJanitor(breakerSweep, breakerIdle, nil)
+
 	mux := http.NewServeMux()
 	reg.RegisterRoutes(mux)
 
@@ -45,7 +56,7 @@ func main() {
 		{Prefix: "/api/users", Service: "user-service", LB: &loadbalancer.LeastConnections{}},
 		{Prefix: "/api/orders", Service: "order-service", LB: &loadbalancer.WeightedRoundRobin{}},
 	})
-	mux.Handle("/", limiter.Middleware(proxy.NewBalancedProxy(rt, reg)))
+	mux.Handle("/", limiter.Middleware(proxy.NewBalancedProxy(rt, reg, breakers, upstreamTimeout)))
 
 	log.Printf("gateway listening on %s", *addr)
 	if err := http.ListenAndServe(*addr, mux); err != nil {
