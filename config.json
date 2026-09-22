@@ -1,0 +1,19 @@
+{
+  "addr": ":8080",
+  "backend_ttl": "10s",
+  "sweep_interval": "5s",
+  "health_interval": "2s",
+  "rate_limit": 10,
+  "rate_burst": 20,
+  "limiter_sweep": "1m",
+  "breaker_threshold": 5,
+  "breaker_cooldown": "10s",
+  "breaker_sweep": "1m",
+  "breaker_idle": "10m",
+  "upstream_timeout": "10s",
+  "api_keys": ["dev-key-1", "dev-key-2"],
+  "routes": [
+    {"prefix": "/api/users", "service": "user-service"},
+    {"prefix": "/api/orders", "service": "order-service"}
+  ]
+}
