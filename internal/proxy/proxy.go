@@ -10,6 +10,7 @@ import (
 
 	"github.com/ihsanguldur/api-gateway/internal/breaker"
 	"github.com/ihsanguldur/api-gateway/internal/loadbalancer"
+	"github.com/ihsanguldur/api-gateway/internal/ratelimit"
 	"github.com/ihsanguldur/api-gateway/internal/registry"
 	"github.com/ihsanguldur/api-gateway/internal/router"
 )
@@ -23,6 +24,13 @@ func NewBalancedProxy(rt *router.Router, reg *registry.Registry, breakers *break
 		if !ok {
 			http.NotFound(w, req)
 			return
+		}
+
+		if route.Limiter != nil {
+			if ok, retryAfter := route.Limiter.Allow(ratelimit.ClientIP(req)); !ok {
+				ratelimit.Reject(w, retryAfter)
+				return
+			}
 		}
 
 		candidates := breakers.Filter(reg.HealthyBackends(route.Service))

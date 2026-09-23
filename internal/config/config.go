@@ -9,8 +9,11 @@ import (
 )
 
 type Route struct {
-	Prefix  string `json:"prefix"`
-	Service string `json:"service"`
+	Prefix    string  `json:"prefix"`
+	Service   string  `json:"service"`
+	LB        string  `json:"lb"`
+	RateLimit float64 `json:"rate_limit"`
+	RateBurst int     `json:"rate_burst"`
 }
 
 type Config struct {
@@ -113,6 +116,12 @@ func (c *Config) validate() error {
 	for _, r := range c.Routes {
 		if r.Prefix == "" || r.Service == "" {
 			return fmt.Errorf("route with empty prefix or service: %+v", r)
+		}
+		if r.RateLimit < 0 || r.RateBurst < 0 {
+			return fmt.Errorf("route %s: rate_limit and rate_burst must not be negative", r.Prefix)
+		}
+		if (r.RateLimit > 0) != (r.RateBurst > 0) {
+			return fmt.Errorf("route %s: rate_limit and rate_burst must be set together", r.Prefix)
 		}
 	}
 	if len(c.APIKeys) == 0 {

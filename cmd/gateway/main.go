@@ -9,6 +9,7 @@ import (
 	"github.com/ihsanguldur/api-gateway/internal/breaker"
 	"github.com/ihsanguldur/api-gateway/internal/config"
 	"github.com/ihsanguldur/api-gateway/internal/health"
+	"github.com/ihsanguldur/api-gateway/internal/loadbalancer"
 	"github.com/ihsanguldur/api-gateway/internal/proxy"
 	"github.com/ihsanguldur/api-gateway/internal/ratelimit"
 	"github.com/ihsanguldur/api-gateway/internal/registry"
@@ -43,7 +44,17 @@ func main() {
 
 	routes := make([]router.Route, len(cfg.Routes))
 	for i, r := range cfg.Routes {
-		routes[i] = router.Route{Prefix: r.Prefix, Service: r.Service}
+		lb, err := loadbalancer.New(r.LB)
+		if err != nil {
+			log.Fatalf("invalid config: routes[%d]: %v", i, err)
+		}
+		route := router.Route{Prefix: r.Prefix, Service: r.Service, LB: lb}
+		if r.RateLimit > 0 {
+			routeLimiter := ratelimit.New(r.RateLimit, r.RateBurst)
+			routeLimiter.StartJanitor(cfg.LimiterSweep, nil)
+			route.Limiter = routeLimiter
+		}
+		routes[i] = route
 	}
 	rt := router.New(routes)
 	mux.Handle("/", limiter.Middleware(keys.Middleware(proxy.NewBalancedProxy(rt, reg, breakers, cfg.UpstreamTimeout))))

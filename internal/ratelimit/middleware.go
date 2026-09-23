@@ -5,21 +5,26 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 func (l *Limiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ok, retryAfter := l.Allow(clientIP(r))
+		ok, retryAfter := l.Allow(ClientIP(r))
 		if !ok {
-			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
-			http.Error(w, "too many requests", http.StatusTooManyRequests)
+			Reject(w, retryAfter)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
 }
 
-func clientIP(r *http.Request) string {
+func Reject(w http.ResponseWriter, retryAfter time.Duration) {
+	w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
+	http.Error(w, "too many requests", http.StatusTooManyRequests)
+}
+
+func ClientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr

@@ -6,12 +6,14 @@ import (
 	"strings"
 
 	"github.com/ihsanguldur/api-gateway/internal/loadbalancer"
+	"github.com/ihsanguldur/api-gateway/internal/ratelimit"
 )
 
 type Route struct {
 	Prefix  string
 	Service string
 	LB      loadbalancer.LoadBalancer
+	Limiter *ratelimit.Limiter
 }
 
 type Router struct {

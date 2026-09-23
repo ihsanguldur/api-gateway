@@ -13,7 +13,7 @@
   "upstream_timeout": "10s",
   "api_keys": ["dev-key-1", "dev-key-2"],
   "routes": [
-    {"prefix": "/api/users", "service": "user-service"},
-    {"prefix": "/api/orders", "service": "order-service"}
+    {"prefix": "/api/users", "service": "user-service", "lb": "least_connections", "rate_limit": 3, "rate_burst": 5},
+    {"prefix": "/api/orders", "service": "order-service", "lb": "weighted_round_robin", "rate_limit": 8, "rate_burst": 12}
   ]
 }
