@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"log"
 	"net/http"
+	"os/signal"
+	"syscall"
 
 	"github.com/ihsanguldur/api-gateway/internal/auth"
 	"github.com/ihsanguldur/api-gateway/internal/breaker"
@@ -26,19 +30,21 @@ func main() {
 		log.Fatalf("invalid config: %v", err)
 	}
 
+	stopJanitors := make(chan struct{})
+
 	reg := registry.New()
-	reg.StartSweeper(cfg.BackendTTL, cfg.SweepInterval, nil)
+	reg.StartJanitor(cfg.BackendTTL, cfg.SweepInterval, stopJanitors)
 
 	checker := health.NewChecker(reg)
-	checker.Start(cfg.HealthInterval, nil)
+	checker.Start(cfg.HealthInterval, stopJanitors)
 
 	limiter := ratelimit.New(cfg.RateLimit, cfg.RateBurst)
-	limiter.StartJanitor(cfg.LimiterSweep, nil)
+	limiter.StartJanitor(cfg.LimiterSweep, stopJanitors)
 
 	keys := auth.NewKeys(cfg.APIKeys...)
 
 	breakers := breaker.NewSet(cfg.BreakerThreshold, cfg.BreakerCooldown)
-	breakers.StartJanitor(cfg.BreakerSweep, cfg.BreakerIdle, nil)
+	breakers.StartJanitor(cfg.BreakerSweep, cfg.BreakerIdle, stopJanitors)
 
 	metricsReg := metrics.New()
 
@@ -55,7 +61,7 @@ func main() {
 		route := router.Route{Prefix: r.Prefix, Service: r.Service, LB: lb}
 		if r.RateLimit > 0 {
 			routeLimiter := ratelimit.New(r.RateLimit, r.RateBurst)
-			routeLimiter.StartJanitor(cfg.LimiterSweep, nil)
+			routeLimiter.StartJanitor(cfg.LimiterSweep, stopJanitors)
 			route.Limiter = routeLimiter
 		}
 		routes[i] = route
@@ -63,8 +69,27 @@ func main() {
 	rt := router.New(routes)
 	mux.Handle("/", limiter.Middleware(keys.Middleware(proxy.NewBalancedProxy(rt, reg, breakers, metricsReg, cfg.UpstreamTimeout))))
 
-	log.Printf("gateway listening on %s (config: %s)", cfg.Addr, *configPath)
-	if err := http.ListenAndServe(cfg.Addr, mux); err != nil {
-		log.Fatal(err)
+	srv := &http.Server{Addr: cfg.Addr, Handler: mux}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		log.Printf("gateway listening on %s (config: %s)", cfg.Addr, *configPath)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("gateway crashed: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+	stop()
+	log.Printf("shutdown signal received, draining in-flight requests (up to %s)", cfg.ShutdownTimeout)
+	close(stopJanitors)
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("shutdown deadline exceeded, forcing close: %v", err)
 	}
+	log.Println("gateway stopped")
 }
