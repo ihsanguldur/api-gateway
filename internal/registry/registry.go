@@ -108,7 +108,7 @@ func (r *Registry) List() []Backend {
 	return out
 }
 
-func (r *Registry) StartSweeper(ttl, interval time.Duration, stop <-chan struct{}) {
+func (r *Registry) StartJanitor(ttl, interval time.Duration, stop <-chan struct{}) {
 	ticker := time.NewTicker(interval)
 	go func() {
 		defer ticker.Stop()

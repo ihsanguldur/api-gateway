@@ -33,6 +33,8 @@ type Config struct {
 	BreakerIdle      time.Duration
 	UpstreamTimeout  time.Duration
 
+	ShutdownTimeout time.Duration
+
 	APIKeys []string
 	Routes  []Route
 }
@@ -53,6 +55,8 @@ type jsonConfig struct {
 	BreakerSweep     string `json:"breaker_sweep"`
 	BreakerIdle      string `json:"breaker_idle"`
 	UpstreamTimeout  string `json:"upstream_timeout"`
+
+	ShutdownTimeout string `json:"shutdown_timeout"`
 
 	APIKeys []string `json:"api_keys"`
 	Routes  []Route  `json:"routes"`
@@ -91,6 +95,7 @@ func Load(path string) (*Config, error) {
 		{"breaker_sweep", raw.BreakerSweep, &cfg.BreakerSweep},
 		{"breaker_idle", raw.BreakerIdle, &cfg.BreakerIdle},
 		{"upstream_timeout", raw.UpstreamTimeout, &cfg.UpstreamTimeout},
+		{"shutdown_timeout", raw.ShutdownTimeout, &cfg.ShutdownTimeout},
 	}
 	for _, d := range durations {
 		v, err := time.ParseDuration(d.src)
