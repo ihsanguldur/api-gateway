@@ -1,0 +1,37 @@
+services:
+  gateway:
+    build:
+      context: .
+      target: gateway
+    ports:
+      - "8080:8080"
+
+  user-a:
+    build:
+      context: .
+      target: mockbackend
+    command: ["--addr=:9001", "--advertise=user-a:9001", "--gateway=http://gateway:8080", "--service=user-service", "--name=user-a"]
+    ports:
+      - "9001:9001"
+    depends_on:
+      - gateway
+
+  user-b:
+    build:
+      context: .
+      target: mockbackend
+    command: ["--addr=:9001", "--advertise=user-b:9001", "--gateway=http://gateway:8080", "--service=user-service", "--name=user-b"]
+    ports:
+      - "9002:9001"
+    depends_on:
+      - gateway
+
+  order-a:
+    build:
+      context: .
+      target: mockbackend
+    command: ["--addr=:9001", "--advertise=order-a:9001", "--gateway=http://gateway:8080", "--service=order-service", "--name=order-a"]
+    ports:
+      - "9003:9001"
+    depends_on:
+      - gateway
