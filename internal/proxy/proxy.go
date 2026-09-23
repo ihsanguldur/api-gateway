@@ -10,25 +10,51 @@ import (
 
 	"github.com/ihsanguldur/api-gateway/internal/breaker"
 	"github.com/ihsanguldur/api-gateway/internal/loadbalancer"
+	"github.com/ihsanguldur/api-gateway/internal/metrics"
 	"github.com/ihsanguldur/api-gateway/internal/ratelimit"
 	"github.com/ihsanguldur/api-gateway/internal/registry"
 	"github.com/ihsanguldur/api-gateway/internal/router"
 )
 
-func NewBalancedProxy(rt *router.Router, reg *registry.Registry, breakers *breaker.Set, upstreamTimeout time.Duration) http.Handler {
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusWriter) WriteHeader(code int) {
+	w.status = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func NewBalancedProxy(rt *router.Router, reg *registry.Registry, breakers *breaker.Set, metricsReg *metrics.Registry, upstreamTimeout time.Duration) http.Handler {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = upstreamTimeout
 
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		start := time.Now()
+		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		var backendAddr string
+		defer func() {
+			latency := time.Since(start)
+			backend := backendAddr
+			if backend == "" {
+				backend = "-"
+			}
+			log.Printf("method=%s path=%s backend=%s status=%d latency=%s", req.Method, req.URL.Path, backend, sw.status, latency)
+			if backendAddr != "" {
+				metricsReg.Record(backendAddr, sw.status >= 500, latency)
+			}
+		}()
+
 		route, ok := rt.Match(req.URL.Path)
 		if !ok {
-			http.NotFound(w, req)
+			http.NotFound(sw, req)
 			return
 		}
 
 		if route.Limiter != nil {
 			if ok, retryAfter := route.Limiter.Allow(ratelimit.ClientIP(req)); !ok {
-				ratelimit.Reject(w, retryAfter)
+				ratelimit.Reject(sw, retryAfter)
 				return
 			}
 		}
@@ -36,10 +62,11 @@ func NewBalancedProxy(rt *router.Router, reg *registry.Registry, breakers *break
 		candidates := breakers.Filter(reg.HealthyBackends(route.Service))
 		b, release, report, ok := pick(route.LB, breakers, candidates)
 		if !ok {
-			http.Error(w, "no healthy backend available", http.StatusServiceUnavailable)
+			http.Error(sw, "no healthy backend available", http.StatusServiceUnavailable)
 			return
 		}
 		defer release()
+		backendAddr = b.Addr
 
 		reported := false
 		finish := func(res breaker.Result) {
@@ -70,7 +97,7 @@ func NewBalancedProxy(rt *router.Router, reg *registry.Registry, breakers *break
 			log.Printf("proxy error: %v", err)
 			rw.WriteHeader(http.StatusBadGateway)
 		}
-		rp.ServeHTTP(w, req)
+		rp.ServeHTTP(sw, req)
 	})
 }
 

@@ -10,6 +10,7 @@ import (
 	"github.com/ihsanguldur/api-gateway/internal/config"
 	"github.com/ihsanguldur/api-gateway/internal/health"
 	"github.com/ihsanguldur/api-gateway/internal/loadbalancer"
+	"github.com/ihsanguldur/api-gateway/internal/metrics"
 	"github.com/ihsanguldur/api-gateway/internal/proxy"
 	"github.com/ihsanguldur/api-gateway/internal/ratelimit"
 	"github.com/ihsanguldur/api-gateway/internal/registry"
@@ -39,8 +40,11 @@ func main() {
 	breakers := breaker.NewSet(cfg.BreakerThreshold, cfg.BreakerCooldown)
 	breakers.StartJanitor(cfg.BreakerSweep, cfg.BreakerIdle, nil)
 
+	metricsReg := metrics.New()
+
 	mux := http.NewServeMux()
 	reg.RegisterRoutes(mux)
+	mux.Handle("/metrics", metricsReg.Handler())
 
 	routes := make([]router.Route, len(cfg.Routes))
 	for i, r := range cfg.Routes {
@@ -57,7 +61,7 @@ func main() {
 		routes[i] = route
 	}
 	rt := router.New(routes)
-	mux.Handle("/", limiter.Middleware(keys.Middleware(proxy.NewBalancedProxy(rt, reg, breakers, cfg.UpstreamTimeout))))
+	mux.Handle("/", limiter.Middleware(keys.Middleware(proxy.NewBalancedProxy(rt, reg, breakers, metricsReg, cfg.UpstreamTimeout))))
 
 	log.Printf("gateway listening on %s (config: %s)", cfg.Addr, *configPath)
 	if err := http.ListenAndServe(cfg.Addr, mux); err != nil {
